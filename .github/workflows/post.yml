@@ -1,0 +1,53 @@
+name: Post scream
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"  
+  workflow_dispatch:
+
+permissions:
+  contents: write            # needed to push the throwaway image branch
+
+concurrency: post-scream
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Generate image
+        run: python instascream.py   # writes 01.jpg
+
+      # Instagram's API only accepts a public URL, so host the JPEG on a
+      # single-commit orphan branch that is force-pushed every run (repo never grows).
+      - name: Host image on raw.githubusercontent.com
+        id: host
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir /tmp/pub
+          cp 01.jpg /tmp/pub/scream.jpg
+          cd /tmp/pub
+          git init -q -b images
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scream.jpg
+          git commit -qm "scream $(date -u +%FT%TZ)"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -q -f origin images
+          echo "url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/$(git rev-parse HEAD)/scream.jpg" >> "$GITHUB_OUTPUT"
+
+      - name: Post to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python post_to_instagram.py "${{ steps.host.outputs.url }}"
